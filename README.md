@@ -5,6 +5,8 @@
 
 Форк оригинала: [DRubioG/JC-ESP32P4-M3-DEV](https://github.com/DRubioG/JC-ESP32P4-M3-DEV)
 
+Ветка с примерами Zigbee Gateway: **`feature/zigbee-gateway-configs`**
+
 ---
 
 ## Содержимое
@@ -18,7 +20,8 @@
 | [5-Schematic](./5-Schematic/) | Схемы платы |
 | [6-User_Manual](./6-User_Manual/) | Руководство пользователя |
 | [8-Burn operation](./8-Burn%20operation/) | Инструкции по прошивке |
-| **[docs/Zigbee_Gateway_Adaptation.md](./docs/Zigbee_Gateway_Adaptation.md)** | **Адаптация Zigbee Gateway под встроенный C6 (SDIO / UART)** |
+| **[docs/Zigbee_Gateway_Adaptation.md](./docs/Zigbee_Gateway_Adaptation.md)** | **Zigbee Gateway: адаптация, Ethernet, прошивка C6** |
+| **[docs/sdkconfig/](./docs/sdkconfig/)** | **Примеры sdkconfig (gateway + ot_rcp)** |
 
 ---
 
@@ -33,19 +36,27 @@
 
 ## Быстрый старт Zigbee Gateway
 
-См. подробное руководство:  
+Полное руководство:  
 **[docs/Zigbee_Gateway_Adaptation.md](./docs/Zigbee_Gateway_Adaptation.md)**
 
-Кратко:
+В нём есть:
+- варианты запуска (A / B / C);
+- **прошивка встроенного C6** (`ot_rcp`) через UART0;
+- **настройка Ethernet** (IP101G);
+- сборка gateway на P4;
+- ссылки на готовые `sdkconfig.defaults`.
 
-1. **Вариант A (рекомендуется)** — прошить C6 как `ot_rcp`, связать с P4 по UART, использовать Ethernet.
-2. **Вариант B** — оставить C6 в ESP-Hosted (Wi-Fi) + внешний RCP по UART.
-3. Чистый Spinel поверх SDIO пока официально не поддерживается.
+Кратко (Вариант A):
+
+1. Прошить C6 → `ot_rcp` (см. раздел 4 в гайде).
+2. На P4: Ethernet + UART к C6 + `esp_zigbee_gateway`.
+3. Использовать defaults из [`docs/sdkconfig/`](./docs/sdkconfig/).
 
 ---
 
 ## Полезные ссылки
 
 - [ESP Zigbee Gateway example](https://github.com/espressif/esp-idf/tree/master/examples/zigbee/esp_zigbee_gateway)
+- [ot_rcp](https://github.com/espressif/esp-idf/tree/master/examples/openthread/ot_rcp)
 - [ESP Zigbee SDK](https://github.com/espressif/esp-zigbee-sdk)
 - [ESP-IDF v5.5](https://github.com/espressif/esp-idf)
