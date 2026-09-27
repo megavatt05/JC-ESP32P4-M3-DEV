@@ -1,23 +1,23 @@
+/*
+ * JC1060 / JC-ESP32P4 Zigbee Coordinator + LVGL HMI
+ * API: esp-zigbee-lib 2.x (IDF 6.0.3)
+ */
 #include <stdio.h>
 #include <string.h>
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_check.h"
 #include "nvs_flash.h"
-#include "driver/i2c_master.h"
-#include "esp_lcd_touch_gt911.h"
+
 #include "esp_lvgl_port.h"
 #include "lvgl.h"
-/* SDK 2.x: top-level esp_zigbee_core.h removed.
- * With CONFIG_ZB_SDK_1xx=y use compat layer; otherwise use "esp_zigbee.h". */
-#include "compat/esp_zigbee_core.h"
+
+#include "esp_zigbee.h"
+#include "ezbee/zha.h"
 
 static const char *TAG = "JC1060_ZB_GW";
-
-#define I2C_PORT_NUM            I2C_NUM_0
-#define I2C_SDA_PIN             GPIO_NUM_7
-#define I2C_SCL_PIN             GPIO_NUM_8
 
 #define ZB_COORDINATOR_ENDPOINT 1
 #define RELAY_EP_L1             1
@@ -28,28 +28,33 @@ static lv_obj_t *s_sw_l1 = NULL;
 static lv_obj_t *s_sw_l2 = NULL;
 static lv_obj_t *s_lbl_status = NULL;
 
-esp_err_t zb_send_relay_cmd(uint16_t short_addr, uint8_t endpoint, bool state)
+static esp_err_t zb_send_relay_cmd(uint16_t short_addr, uint8_t endpoint, bool state)
 {
     if (short_addr == 0xFFFF) {
         ESP_LOGW(TAG, "Устройство не привязано! Команда проигнорирована.");
         return ESP_ERR_INVALID_STATE;
     }
 
-    esp_zb_zcl_on_off_cmd_t cmd_req;
-    memset(&cmd_req, 0, sizeof(cmd_req));
-    cmd_req.zcl_basic_cmd.src_endpoint = ZB_COORDINATOR_ENDPOINT;
-    cmd_req.zcl_basic_cmd.dst_endpoint = endpoint;
-    cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = short_addr;
-    cmd_req.address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT;
-    cmd_req.on_off_cmd_id = state ? ESP_ZB_ZCL_CMD_ON_OFF_ON_ID : ESP_ZB_ZCL_CMD_ON_OFF_OFF_ID;
+    ezb_zcl_on_off_cmd_t cmd_req = {
+        .cmd_ctrl =
+            {
+                .dst_addr =
+                    {
+                        .addr_mode    = EZB_ADDR_MODE_SHORT,
+                        .u.short_addr = short_addr,
+                    },
+                .src_ep = ZB_COORDINATOR_ENDPOINT,
+                .dst_ep = endpoint,
+            },
+    };
 
-    ESP_LOGI(TAG, "ZCL отправка: Канал %d -> %s (Адрес: 0x%04X)", endpoint, state ? "ВКЛ" : "ВЫКЛ", short_addr);
+    ESP_LOGI(TAG, "ZCL: канал %d -> %s (0x%04X)", endpoint, state ? "ВКЛ" : "ВЫКЛ", short_addr);
 
-    esp_zb_lock_acquire(portMAX_DELAY);
-    esp_err_t ret = esp_zb_zcl_on_off_cmd_req(&cmd_req);
-    esp_zb_lock_release();
+    esp_zigbee_lock_acquire(portMAX_DELAY);
+    ezb_err_t zret = state ? ezb_zcl_on_off_on_cmd_req(&cmd_req) : ezb_zcl_on_off_off_cmd_req(&cmd_req);
+    esp_zigbee_lock_release();
 
-    return ret;
+    return (zret == EZB_ERR_NONE) ? ESP_OK : ESP_FAIL;
 }
 
 static void event_sw_l1_cb(lv_event_t *e)
@@ -68,10 +73,11 @@ static void event_sw_l2_cb(lv_event_t *e)
 
 static void event_btn_pair_cb(lv_event_t *e)
 {
-    ESP_LOGI(TAG, "Открытие сети Zigbee на 180 секунд...");
-    esp_zb_lock_acquire(portMAX_DELAY);
-    esp_zb_bdb_open_network(180);
-    esp_zb_lock_release();
+    (void)e;
+    ESP_LOGI(TAG, "Открытие сети Zigbee на 180 с...");
+    esp_zigbee_lock_acquire(portMAX_DELAY);
+    ezb_bdb_open_network(180);
+    esp_zigbee_lock_release();
     if (s_lbl_status) {
         lv_label_set_text(s_lbl_status, "Статус: Поиск устройств (180с)...");
     }
@@ -128,94 +134,119 @@ static void create_hmi_gui(void)
     lv_obj_center(lbl_btn);
 
     s_lbl_status = lv_label_create(scr);
-    lv_label_set_text(s_lbl_status, "Статус: Сеть Zigbee активна (Канал 13)");
+    lv_label_set_text(s_lbl_status, "Статус: ожидание сети Zigbee...");
     lv_obj_set_style_text_font(s_lbl_status, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(s_lbl_status, lv_color_hex(0x88C0D0), 0);
     lv_obj_align(s_lbl_status, LV_ALIGN_BOTTOM_RIGHT, -100, -65);
 }
 
-static void bdb_start_top_level_commissioning_cb(uint8_t mode_mask)
+static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
 {
-    ESP_ERROR_CHECK(esp_zb_bdb_start_top_level_commissioning(mode_mask));
-}
+    ezb_app_signal_type_t signal_type = ezb_app_signal_get_type(app_signal);
 
-void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
-{
-    uint32_t *p_sg_p = signal_struct->p_app_signal;
-    esp_err_t err_status = signal_struct->esp_err_status;
-    esp_zb_app_signal_type_t sig_type = (esp_zb_app_signal_type_t)*p_sg_p;
-
-    switch (sig_type) {
-    case ESP_ZB_ZDO_SIGNAL_SKIP_STARTUP:
+    switch (signal_type) {
+    case EZB_ZDO_SIGNAL_SKIP_STARTUP:
         ESP_LOGI(TAG, "Инициализация Zigbee координатора...");
-        esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_INITIALIZATION);
+        ezb_bdb_start_top_level_commissioning(EZB_BDB_MODE_INITIALIZATION);
         break;
-    case ESP_ZB_BDB_SIGNAL_DEVICE_FIRST_START:
-    case ESP_ZB_BDB_SIGNAL_DEVICE_REBOOT:
-        if (err_status == ESP_OK) {
+
+    case EZB_BDB_SIGNAL_DEVICE_FIRST_START:
+    case EZB_BDB_SIGNAL_DEVICE_REBOOT: {
+        ezb_bdb_comm_status_t status = *((ezb_bdb_comm_status_t *)ezb_app_signal_get_params(app_signal));
+        if (status == EZB_BDB_STATUS_SUCCESS) {
             ESP_LOGI(TAG, "Формирование сети Zigbee 3.0...");
-            esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_NETWORK_FORMATION);
+            ezb_bdb_start_top_level_commissioning(EZB_BDB_MODE_NETWORK_FORMATION);
+        } else {
+            ESP_LOGW(TAG, "BDB init status 0x%02x", status);
         }
-        break;
-    case ESP_ZB_BDB_SIGNAL_FORMATION:
-        if (err_status == ESP_OK) {
-            ESP_LOGI(TAG, "Сеть сформирована! PAN ID: 0x%04X, Канал: %d",
-                     esp_zb_get_pan_id(), esp_zb_get_current_channel());
-            esp_zb_bdb_open_network(180);
+    } break;
+
+    case EZB_BDB_SIGNAL_FORMATION: {
+        ezb_bdb_comm_status_t status = *((ezb_bdb_comm_status_t *)ezb_app_signal_get_params(app_signal));
+        if (status == EZB_BDB_STATUS_SUCCESS) {
+            ESP_LOGI(TAG, "Сеть сформирована! PAN 0x%04hx, канал %d",
+                     ezb_nwk_get_panid(), ezb_nwk_get_current_channel());
+            ezb_bdb_open_network(180);
+            if (s_lbl_status) {
+                char buf[80];
+                snprintf(buf, sizeof(buf), "Статус: сеть OK, PAN 0x%04X ch %d",
+                         ezb_nwk_get_panid(), ezb_nwk_get_current_channel());
+                lv_label_set_text(s_lbl_status, buf);
+            }
+        } else {
+            ESP_LOGW(TAG, "Formation failed 0x%02x", status);
         }
-        break;
-    case ESP_ZB_ZDO_SIGNAL_DEVICE_ANNCE: {
-        esp_zb_zdo_signal_device_annce_params_t *dev_annce_params =
-            (esp_zb_zdo_signal_device_annce_params_t *)esp_zb_app_signal_get_params(p_sg_p);
-        s_bound_relay_short_addr = dev_annce_params->device_short_addr;
-        ESP_LOGI(TAG, "Новое Zigbee устройство подключено! Короткий адрес: 0x%04X", s_bound_relay_short_addr);
+    } break;
+
+    case EZB_ZDO_SIGNAL_DEVICE_ANNCE: {
+        const ezb_zdo_signal_device_annce_params_t *ann =
+            (const ezb_zdo_signal_device_annce_params_t *)ezb_app_signal_get_params(app_signal);
+        s_bound_relay_short_addr = ann->device_short_addr;
+        ESP_LOGI(TAG, "Устройство подключено: 0x%04hx", s_bound_relay_short_addr);
         if (s_lbl_status) {
             char buf[64];
             snprintf(buf, sizeof(buf), "Реле подключено: 0x%04X", s_bound_relay_short_addr);
             lv_label_set_text(s_lbl_status, buf);
         }
-        break;
-    }
+    } break;
+
+    case EZB_NWK_SIGNAL_PERMIT_JOIN_STATUS: {
+        uint8_t duration = *(uint8_t *)ezb_app_signal_get_params(app_signal);
+        if (duration) {
+            ESP_LOGI(TAG, "Сеть открыта %d с", duration);
+        } else {
+            ESP_LOGI(TAG, "Сеть закрыта для join");
+        }
+    } break;
+
     default:
-        ESP_LOGD(TAG, "Сигнал ZDO: 0x%x, статус: %s", sig_type, esp_err_to_name(err_status));
+        ESP_LOGD(TAG, "Signal %s (0x%02x)", ezb_app_signal_to_string(signal_type), signal_type);
         break;
     }
+    return true;
+}
+
+static esp_err_t create_coordinator_device(void)
+{
+    ezb_af_device_desc_t dev_desc = ezb_af_create_device_desc();
+    ezb_zha_on_off_switch_config_t switch_cfg = EZB_ZHA_ON_OFF_SWITCH_CONFIG();
+    ezb_af_ep_desc_t ep_desc = ezb_zha_create_on_off_switch(ZB_COORDINATOR_ENDPOINT, &switch_cfg);
+
+    ESP_ERROR_CHECK(ezb_af_device_add_endpoint_desc(dev_desc, ep_desc));
+    ESP_ERROR_CHECK(ezb_af_device_desc_register(dev_desc));
+    return ESP_OK;
 }
 
 static void zigbee_task(void *pvParameters)
 {
-    /* Optional: init dedicated NVS partition for Zigbee 2.x */
-    nvs_flash_init_partition("zb_storage");
+    (void)pvParameters;
 
-    esp_zb_cfg_t zb_nwk_cfg = {
-        .esp_zb_role = ESP_ZB_DEVICE_TYPE_COORDINATOR,
-        .install_code_policy = false,
-        .nwk_cfg.zczr_cfg = {
-            .max_children = 32,
-        },
-    };
-    esp_zb_init(&zb_nwk_cfg);
+    /* Dedicated NVS partition for Zigbee 2.x (optional but recommended) */
+    esp_err_t nvs_zb = nvs_flash_init_partition("zb_storage");
+    if (nvs_zb != ESP_OK) {
+        ESP_LOGW(TAG, "zb_storage NVS init: %s (using default nvs)", esp_err_to_name(nvs_zb));
+    }
 
-    esp_zb_on_off_switch_cfg_t switch_cfg = ESP_ZB_DEFAULT_ON_OFF_SWITCH_CONFIG();
-    esp_zb_ep_list_t *ep_list = esp_zb_ep_list_create();
-    esp_zb_endpoint_config_t ep_cfg = {
-        .endpoint = ZB_COORDINATOR_ENDPOINT,
-        .app_profile_id = ESP_ZB_AF_HA_PROFILE_ID,
-        .app_device_id = ESP_ZB_HA_ON_OFF_SWITCH_DEVICE_ID,
-        .app_device_version = 0,
-    };
-    esp_zb_ep_list_add_ep(ep_list, esp_zb_on_off_switch_ep_create(ZB_COORDINATOR_ENDPOINT, &switch_cfg), ep_cfg);
-    esp_zb_device_register(ep_list);
+    esp_zigbee_config_t config = ESP_ZIGBEE_DEFAULT_CONFIG();
+    /* Coordinator role */
+    config.device_config.device_type = EZB_NWK_DEVICE_TYPE_COORDINATOR;
+    config.device_config.install_code_policy = false;
+    config.device_config.zczr_config.max_children = 32;
 
-    esp_zb_set_primary_network_channel_set(1 << 13);
-    ESP_ERROR_CHECK(esp_zb_start(false));
-    /* SDK 2.x: esp_zb_main_loop_iteration() is a no-op; use mainloop */
-    esp_zb_stack_main_loop();
+    ESP_ERROR_CHECK(esp_zigbee_init(&config));
+    ESP_ERROR_CHECK(ezb_app_signal_add_handler(esp_zigbee_app_signal_handler));
+    ESP_ERROR_CHECK(ezb_bdb_set_primary_channel_set((1U << 13))); /* channel 13 */
+    ESP_ERROR_CHECK(create_coordinator_device());
+    ESP_ERROR_CHECK(esp_zigbee_start(false));
+
+    esp_zigbee_launch_mainloop();
+    esp_zigbee_deinit();
+    vTaskDelete(NULL);
 }
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "Запуск шлюза JC1060P470C Zigbee Coordinator...");
+    ESP_LOGI(TAG, "Запуск шлюза Zigbee Coordinator (SDK 2.x)...");
 
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
