@@ -1,62 +1,56 @@
-# JC-ESP32P4-M3-DEV
+# JC-ESP32P4-M3-DEV (fork)
 
-Репозиторий платы **GUITION JC-ESP32P4-M3-DEV**  
-(ESP32-P4 + ESP32-C6, 32 MB PSRAM, 16 MB Flash, Ethernet, ES8311, microSD и др.)
+Плата **GUITION JC-ESP32P4-M3-DEV**: ESP32-P4 + ESP32-C6, 32 MB PSRAM, 16 MB Flash, Ethernet, ES8311, microSD.
 
-Форк оригинала: [DRubioG/JC-ESP32P4-M3-DEV](https://github.com/DRubioG/JC-ESP32P4-M3-DEV)
-
-Ветка с примерами Zigbee Gateway: **`feature/zigbee-gateway-configs`**
+Оригинал: [DRubioG/JC-ESP32P4-M3-DEV](https://github.com/DRubioG/JC-ESP32P4-M3-DEV)  
+Ветка: **`feature/zigbee-gateway-configs`** — прошивка C6 и gateway.
 
 ---
 
-## Содержимое
+## Главное: как прошить C6
 
-| Папка / файл | Описание |
-|--------------|----------|
-| [1-Demo](./1-Demo/) | Демонстрационные проекты |
-| [2-Specification](./2-Specification/) | Спецификации |
-| [3-Structure_Diagram](./3-Structure_Diagram/) | Структурные схемы |
-| [4-Driver_IC_Data_Sheet](./4-Driver_IC_Data_Sheet/) | Даташиты драйверов |
-| [5-Schematic](./5-Schematic/) | Схемы платы |
-| [6-User_Manual](./6-User_Manual/) | Руководство пользователя |
-| [8-Burn operation](./8-Burn%20operation/) | Инструкции по прошивке |
-| **[docs/Zigbee_Gateway_Adaptation.md](./docs/Zigbee_Gateway_Adaptation.md)** | **Zigbee Gateway: адаптация, Ethernet, прошивка C6** |
-| **[docs/sdkconfig/](./docs/sdkconfig/)** | **Примеры sdkconfig (gateway + ot_rcp)** |
+**Отдельного USB-порта у C6 нет.** USB-C на плате идут только на **P4**.
+
+| Способ | Как |
+|--------|-----|
+| **Внешний** (обязателен хотя бы раз) | USB-TTL 3.3 V → `C6_U0TXD` / `C6_U0RXD` / BOOT / EN на expansion header |
+| **Через P4** | После `ot_rcp` на C6 — приложение на P4 с `AUTO_UPDATE_RCP` по UART |
+
+Подробно: **[docs/C6_Programming.md](./docs/C6_Programming.md)**  
+Пошаговый проект: **[firmware/c6_via_p4/](./firmware/c6_via_p4/)**
 
 ---
 
-## Важные аппаратные ограничения
+## Документация ветки
 
-- **SDIO-конфликт**: ESP32-C6 (Wi-Fi / 802.15.4) и microSD используют одни и те же линии (GPIO 39–44).  
-  При активном Wi-Fi/Zigbee через C6 карту SD использовать нельзя.
-- Для проектов, где нужны и сеть, и SD-карта — предпочтителен **Ethernet**.
-- Рекомендуемая версия ESP-IDF: **v5.5.x**.
+| Путь | Содержание |
+|------|------------|
+| [docs/C6_Programming.md](./docs/C6_Programming.md) | Порты, UART0 C6, download mode, Hosted vs RCP |
+| [docs/Zigbee_Gateway_Adaptation.md](./docs/Zigbee_Gateway_Adaptation.md) | Zigbee Gateway + Ethernet + SDIO-конфликт |
+| [docs/sdkconfig/](./docs/sdkconfig/) | Фрагменты sdkconfig |
+| [firmware/c6_via_p4/](./firmware/c6_via_p4/) | Порядок прошивки C6 через / с помощью P4 |
 
----
-
-## Быстрый старт Zigbee Gateway
-
-Полное руководство:  
-**[docs/Zigbee_Gateway_Adaptation.md](./docs/Zigbee_Gateway_Adaptation.md)**
-
-В нём есть:
-- варианты запуска (A / B / C);
-- **прошивка встроенного C6** (`ot_rcp`) через UART0;
-- **настройка Ethernet** (IP101G);
-- сборка gateway на P4;
-- ссылки на готовые `sdkconfig.defaults`.
-
-Кратко (Вариант A):
-
-1. Прошить C6 → `ot_rcp` (см. раздел 4 в гайде).
-2. На P4: Ethernet + UART к C6 + `esp_zigbee_gateway`.
-3. Использовать defaults из [`docs/sdkconfig/`](./docs/sdkconfig/).
+Оригинальные папки платы (`1-Demo` … `8-Burn operation`, схемы) сохранены без изменений.
 
 ---
 
-## Полезные ссылки
+## Ограничения железа
 
-- [ESP Zigbee Gateway example](https://github.com/espressif/esp-idf/tree/master/examples/zigbee/esp_zigbee_gateway)
-- [ot_rcp](https://github.com/espressif/esp-idf/tree/master/examples/openthread/ot_rcp)
-- [ESP Zigbee SDK](https://github.com/espressif/esp-zigbee-sdk)
-- [ESP-IDF v5.5](https://github.com/espressif/esp-idf)
+- **SDIO**: C6 (Wi-Fi) и microSD делят GPIO 39–44 — одновременно нельзя.
+- Для сети + SD → **Ethernet** (IP101G).
+- ESP-IDF: **v5.5.x** (для gateway/RCP); v6.0.x — с учётом миграции.
+
+---
+
+## Быстрый старт C6 → P4 gateway
+
+```bash
+# 1) C6 = ot_rcp (внешний USB-TTL)
+cd $IDF_PATH/examples/openthread/ot_rcp && idf.py set-target esp32c6 build
+idf.py -p /dev/ttyUSB0 erase-flash flash
+
+# 2) P4 = gateway + Ethernet + UART RCP
+cd $IDF_PATH/examples/zigbee/esp_zigbee_gateway && idf.py set-target esp32p4
+# menuconfig: Ethernet, AUTO_UPDATE_RCP, пины UART
+idf.py build flash monitor
+```
