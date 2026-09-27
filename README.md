@@ -1,26 +1,48 @@
 # jc1060-zigbee-gateway
 
-Локальный шлюз Zigbee 3.0 и контроллер 2-канльного реле на базе платы Guition JC1060P470C (ESP32-P4 + ESP32-C6).
+Zigbee 3.0 Gateway + LVGL HMI на **Guition JC1060P470C / JC-ESP32P4-M3-DEV**.
 
-Документ полной спецификаци в Google Документах: [Спецификация прокта в Google Docs](https://docs.google.com/document/d/18wS22gVPCy645Lzne5a_H5EV_GFkMbuEvTJx2xtfK5U/edit)
+| Роль | Чип | Прошивка |
+|------|-----|----------|
+| Host (stack, UI, Ethernet) | **ESP32-P4** | этот проект |
+| Radio (802.15.4) | **ESP32-C6** | `ot_rcp` (OpenThread RCP) |
 
-## 1. Архитектура решения
-- **Хост-контроллер (ESP32-P4):** двухъядерный RISC-V 400 МГц, 32 МБ PSRAM, 16 Б Flash. Отрисовка графическго интерфейса LVGL v9, опрос тачскрина Goodix GT911 (I2C), огика автоматизации.
-- - **Беспроводной сопроцессор (ESP32-C6):** одноядерный RISC-V 160 МГ, 4 МБ Flash. Аппаратный радиоинтерфей IEEE 802.15.4 (2.4 ГГц), координатор Zigbee 3.0 (ZC) на базе ESP-Zigbee-SDK.
-  - - **Цлевое устройтво:** 2-канальый моуль умного реле Zigbee (2CH Zigbee Switch Module-L) без нейтрали / с нейтралью.
-   
-    - ## 2. Адреация ZCL для 2-канального реле
-    - - **Endpoint 1 (Канал 1 / L1):** On/Off Cluster (0x0006), Basic (0x0000), Identify (0x0003), Groups (0x0004), Scenes (0x0005).
-      - - **Endpoint 2 (Канал 2 / L2):** On/Off Cluster (0x0006).
-       
-        - ## 3. Конфиурация проекта (ESP-IDF)
-        - Зависимости `main/idf_component.yml`:
-        - - idf: ">=5.3.0"
-          - - espressif/esp-zigbee-lib: "^1.6.0"
-            - - espressif/esp_hosted: "^2.12.6"
-              - - lvgl/lvgl: "^9.2.0"
-               
-                - ## 4. Аппаратные особенности и предостережения
-                - 1. **Реле без нйтрли (Module-L):** при мощности ламп менее 5 Вт обязателен комплектный шунтирующий конденсатор параллельно нагрузке перого канала (L1).
-                  2. 2. **Адресация канало:** команды на второй канал отпрвляются строго с указанием dst_endpoint = 2.
-                     3. 3. **Раздел zb_storage:** обязтелен в таблице разделов partitions.csv для сохранения базы сопряженных устройств при выключении питаия.
+Связь P4 ↔ C6: **UART + Spinel** (`CONFIG_ZB_RADIO_SPINEL_UART`).
+
+## Документация
+
+- **[docs/P4_C6_RCP_Setup.md](./docs/P4_C6_RCP_Setup.md)** — пошаговая настройка P4 + C6 RCP
+- ESP-IDF: **v6.0.3** (или v5.5.4+)
+- Zigbee: **esp-zigbee-lib ^2.0.4** (API `esp_zigbee.h` / `ezb_*`)
+
+## Быстрый старт
+
+```powershell
+# 1) C6 → ot_rcp (один раз, USB-TTL)
+cd $env:IDF_PATH\examples\openthread\ot_rcp
+idf.py set-target esp32c6
+idf.py menuconfig   # OPENTHREAD_NCP_VENDOR_HOOK = y
+idf.py build && idf.py -p COMx flash
+
+# 2) P4 → этот проект
+cd C:\Users\megav\Downloads\gateway
+idf.py set-target esp32p4
+idf.py menuconfig   # Zigbee → Radio = Spinel UART
+idf.py build && idf.py -p COMy flash monitor
+```
+
+Подробности: [docs/P4_C6_RCP_Setup.md](./docs/P4_C6_RCP_Setup.md).
+
+## Зависимости (`idf_component.yml`)
+
+```yaml
+dependencies:
+  espressif/esp-zigbee-lib: "^2.0.4"
+  idf: ">=5.1.0"
+```
+
+## Важно
+
+- После `ot_rcp` на C6 **нет Wi-Fi ESP-Hosted** — сеть на P4 через **Ethernet**.
+- SDIO между P4 и C6 не заменяет UART для Zigbee Spinel.
+- `zb_storage` в `partitions.csv` — subtype **nvs** (SDK 2.x).
