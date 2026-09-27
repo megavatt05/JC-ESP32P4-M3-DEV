@@ -1,0 +1,20 @@
+# JC-ESP32P4-M3-DEV — P4 host for C6 RCP (Zigbee/Thread gateway style)
+# Copy next to esp_zigbee_gateway or merge via menuconfig
+
+CONFIG_IDF_TARGET="esp32p4"
+
+# Network: Ethernet, not Wi-Fi (C6 is RCP, not Hosted)
+CONFIG_EXAMPLE_CONNECT_ETHERNET=y
+CONFIG_EXAMPLE_CONNECT_WIFI=n
+CONFIG_EXAMPLE_USE_INTERNAL_ETHERNET=y
+
+# RCP auto-update over UART
+CONFIG_AUTO_UPDATE_RCP=y
+
+# Flash size on module
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# UART pins to C6 — set in menuconfig to match your schematic:
+# CONFIG_PIN_TO_RCP_TX / RX / RESET / BOOT
