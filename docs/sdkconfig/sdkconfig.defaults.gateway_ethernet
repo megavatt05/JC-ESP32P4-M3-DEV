@@ -1,0 +1,49 @@
+# JC-ESP32P4-M3-DEV — Zigbee Gateway (P4 host)
+# Вариант A: Ethernet + UART RCP (встроенный C6 с ot_rcp)
+# ESP-IDF v5.5.x recommended
+
+# ---------------------------------------------------------------------------
+# Target
+# ---------------------------------------------------------------------------
+CONFIG_IDF_TARGET="esp32p4"
+
+# ---------------------------------------------------------------------------
+# Example connection — Ethernet (не Wi-Fi)
+# ---------------------------------------------------------------------------
+CONFIG_EXAMPLE_CONNECT_ETHERNET=y
+CONFIG_EXAMPLE_CONNECT_WIFI=n
+CONFIG_EXAMPLE_USE_INTERNAL_ETHERNET=y
+# IP101G на плате — RMII. Уточните MDC/MDIO/CLK по схеме при необходимости.
+# CONFIG_EXAMPLE_ETH_PHY_IP101=y  (если опция есть в вашем IDF)
+
+# ---------------------------------------------------------------------------
+# Zigbee Gateway / RCP update (UART)
+# Пины — ПРИМЕРЫ. Замените на реальные с expansion header платы!
+# ---------------------------------------------------------------------------
+CONFIG_AUTO_UPDATE_RCP=y
+# CONFIG_ZB_GW_RCP_CHIP_ESP32C6=y   # если есть выбор чипа RCP
+
+# Типичные значения (проверьте 5-Schematic / expansion):
+# Host RX  <- C6 TX
+# Host TX  -> C6 RX
+# CONFIG_PIN_TO_RCP_TX=5
+# CONFIG_PIN_TO_RCP_RX=4
+# CONFIG_PIN_TO_RCP_RESET=54
+# CONFIG_PIN_TO_RCP_BOOT=8
+
+# ---------------------------------------------------------------------------
+# Zigbee
+# ---------------------------------------------------------------------------
+CONFIG_ZB_ENABLED=y
+CONFIG_ZB_RADIO_NATIVE=n
+# CONFIG_ZB_ZCZR=y
+
+# ---------------------------------------------------------------------------
+# Partition / flash (ориентир под 16 MB Flash платы)
+# ---------------------------------------------------------------------------
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+# ---------------------------------------------------------------------------
+# Рекомендации по логам
+# ---------------------------------------------------------------------------
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
