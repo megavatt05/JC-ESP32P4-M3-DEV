@@ -10,6 +10,7 @@
 #include "esp_log.h"
 #include "esp_check.h"
 #include "nvs_flash.h"
+#include "sdkconfig.h"
 
 #include "esp_lvgl_port.h"
 #include "lvgl.h"
@@ -22,6 +23,7 @@ static const char *TAG = "JC1060_ZB_GW";
 #define ZB_COORDINATOR_ENDPOINT 1
 #define RELAY_EP_L1             1
 #define RELAY_EP_L2             2
+#define ZB_STORAGE_PARTITION    "zb_storage"
 
 static uint16_t s_bound_relay_short_addr = 0xFFFF;
 static lv_obj_t *s_sw_l1 = NULL;
@@ -181,7 +183,8 @@ static bool esp_zigbee_app_signal_handler(const ezb_app_signal_t *app_signal)
     case EZB_ZDO_SIGNAL_DEVICE_ANNCE: {
         const ezb_zdo_signal_device_annce_params_t *ann =
             (const ezb_zdo_signal_device_annce_params_t *)ezb_app_signal_get_params(app_signal);
-        s_bound_relay_short_addr = ann->device_short_addr;
+        /* SDK 2.x: field is short_addr (not device_short_addr) */
+        s_bound_relay_short_addr = ann->short_addr;
         ESP_LOGI(TAG, "Устройство подключено: 0x%04hx", s_bound_relay_short_addr);
         if (s_lbl_status) {
             char buf[64];
@@ -221,17 +224,36 @@ static void zigbee_task(void *pvParameters)
 {
     (void)pvParameters;
 
-    /* Dedicated NVS partition for Zigbee 2.x (optional but recommended) */
-    esp_err_t nvs_zb = nvs_flash_init_partition("zb_storage");
+    esp_err_t nvs_zb = nvs_flash_init_partition(ZB_STORAGE_PARTITION);
     if (nvs_zb != ESP_OK) {
-        ESP_LOGW(TAG, "zb_storage NVS init: %s (using default nvs)", esp_err_to_name(nvs_zb));
+        ESP_LOGW(TAG, "zb_storage NVS: %s — fallback to default nvs", esp_err_to_name(nvs_zb));
     }
 
-    esp_zigbee_config_t config = ESP_ZIGBEE_DEFAULT_CONFIG();
-    /* Coordinator role */
-    config.device_config.device_type = EZB_NWK_DEVICE_TYPE_COORDINATOR;
-    config.device_config.install_code_policy = false;
-    config.device_config.zczr_config.max_children = 32;
+    /* ESP_ZIGBEE_DEFAULT_CONFIG is only in examples — build config explicitly */
+    esp_zigbee_config_t config = {
+        .device_config =
+            {
+                .device_type         = EZB_NWK_DEVICE_TYPE_COORDINATOR,
+                .install_code_policy = false,
+                .zczr_config =
+                    {
+                        .max_children = 32,
+                    },
+            },
+        .platform_config =
+            {
+                .storage_partition_name = (nvs_zb == ESP_OK) ? ZB_STORAGE_PARTITION : "nvs",
+                .radio_config =
+                    {
+#if CONFIG_ZB_RADIO_SPINEL_UART
+                        .radio_mode = ESP_ZIGBEE_RADIO_MODE_UART_RCP,
+                        /* UART pins: set via menuconfig / board header when using P4+C6 RCP */
+#else
+                        .radio_mode = ESP_ZIGBEE_RADIO_MODE_NATIVE,
+#endif
+                    },
+            },
+    };
 
     ESP_ERROR_CHECK(esp_zigbee_init(&config));
     ESP_ERROR_CHECK(ezb_app_signal_add_handler(esp_zigbee_app_signal_handler));
